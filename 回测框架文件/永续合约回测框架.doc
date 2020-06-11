@@ -1,0 +1,214 @@
+﻿　１　合约的参数加入：
+　　　策略页面的ai.create_account加入bool值　inverse（反向合约）
+　　　现货和合约的账户通过ai.create_account创建，其中 inverse　默认值是0。即默认账户交易标的是正向合约。
+　　　其中inverse为真时(值为１)，合约的规格如：合约标的、乘数、资金费率、计价价格、结算货币、初始和维持保证金率等通过账户中的exchange、position_base中的持有标的判断合约，
+　　　在contract_info中找到事先写入的合约规格信息。
+　　　contract_info={'bitmex':{'XBTUSD':{'type': 'inverse','multipier':1,'quote_currency':'usd','settle_currency':'btc','initial_margin':0.01,
+　　　　　　　　　　'maintenance_margin':0.005,'min_qty':1,'tick_size':0.5,'fund_time':{'time1':'12:00:00','time2':'20:00:00','time3':'04:00:00'}}}}
+
+含义\名称
+XBTUSD
+type
+multiplier
+quote_currency
+settle_currency
+initial_margin
+maintenance_margin
+min_qty
+tick_size
+fund_time
+
+合约名称
+类型
+乘数
+计价货币
+结算货币
+初始保证金率
+维持保证金率
+最小购买单位
+最小价格波动
+资金费率时间
+　２　加入事中的收益和风险结算体系：
+　　　通过portfolio.calculate_settlement在Strategy中对合约标的进行实时的收益、风险结算，以此判断是否需要强平或止损止盈平仓,同时进行资金费率的结算。
+　　　其中强平标准按照全仓或逐仓模式中的（持有标的面值）/（保证金总额）< 维持保证金率。
+                       amount/margin_balance<=maintenance_margin
+             在此刻K线与前一根Ｋ线之间的标记价格的最大值与最小值为标准计算是否触发强平。
+　　　止盈止损按照成交所有stop_orders追踪指定订单的盈亏情况，按照预先指定的价格触发平仓。
+　　　资金费率结算定时每隔８小时结算一次。　分钟级策略在指定的时间点结算资金费率，日线　　
+　３　合约的账户和头寸管理：
+　　　通过account和contract_position对合约标的的账户和头寸进行管理和计算。因为合约的账户和头寸与现货相比，包含的属性和计算方法各有不同，通过分类达到合理归属。
+          　同时增加contract_balance作为合约保证金的处理类
+　　　其中account、contract_position、contract_balance的主要属性为：
+　　　 
+属性\名称
+account
+含义
+contract_position
+含义
+contract_balance
+
+
+context
+研究环境
+asset_class
+资产类型
+wallet_balance
+钱包余额
+
+name
+账户名
+asset
+资产名称
+unrealized_pnl
+未实现盈亏
+
+exchange
+交易所名
+value
+价格
+margin_balance
+保证金总额
+
+asset_class
+资产类别
+amount
+总额
+position_margin
+逐仓模式的初始占用保证金
+
+current_position
+目前持仓
+total
+资产总数（available+frozen）
+order_margin
+委托单占用保证金
+
+inverse
+合约标记
+available
+可用量
+available_balance
+可用保证金余额
+
+history_orders
+历史所有指令单
+frozen
+下单冻结数量
+
+
+
+orders
+当前的指令单
+avg_cost_btc
+合约持仓均价
+
+
+
+stop_orders
+止盈止损单
+avg_cost_usdt
+结算货币持仓均价
+
+
+
+balance
+保证金合集
+margin
+委托单占用保证金
+
+
+
+
+
+mode
+仓位状态（默认为cross）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+       
+　　　
+　４　止盈止损
+　　　在不同账户的交易时，加入针对每一笔交易的止盈止损方法。
+　　　stop_loss(order_id,price)为固定价格止损,
+　　　stop_profit(order_id,price)为固定价格止盈,
+       　   stop_loss_pct(order_id,pct)为固定盈亏比例止损。
+　　　stop_profit_pct(order_id,pct)为固定盈亏比例止盈。
+             将止盈止损加入short_open 、short_open_pct、long_open 、long_open_pct、
+             short_close 、short_close_pct、long_close 、long_close_pct中
+　　　以short为例：
+　　　context.account_1.short_open("BTC/USDT.poloniex",9980.5,0.5,order_style={'name':'stop_loss','value':9600})
+             context.account_1.short_open_pct("BTC/USDT.poloniex",9980.5,0.5,order_style={'name':'stop_loss_pct','value':0.15})　　
+            其中　position_effect是开仓和平仓标志，
+　　　　　   order_style是止损止盈选项，name是止盈止损标志，namevalue是对应止盈止损数值。
+           默认值为：
+　　　def short_open(self,symbol_exchange,price,qty,order_style=None)：
+
+　　　对应order加入stop_trades属性，记录所有trades的止盈止损单
+　　　stop_trades　属性
+id
+side
+price
+qty
+amount
+commission
+stop_price
+loss_profit
+订单id
+买卖方向
+成交价格
+成交数量
+成交金额
+佣金费
+止盈止损价格
+止损或止盈标志
+　　　在portfolio.calculate_settlement中进行及时的盈亏结算时，针对stop_trades每一个订单进行止盈止损价格遍历。当前价格达到stop_price且方向走势吻合，则
+　　　发出以市价平仓的信号。并由account.buy()或 account.sell() 完成下单与交易。
+　５　不同类型账户收益结算
+　　　现货统一按照usdt进行收益结算，得到回测报告。
+　　　合约统一按照加密货币(BTC)结算，得到及时收益风险结算和回测报告。
+　　　是否支持现货账户与合约账户的组合结算，再讨论。　
+　６　逐仓模式与杠杆设定
+              str值mode（全仓/逐仓模式）和float值　leverage（杠杆倍数）
+             在框架中我们在handle_data()中通过context.account_1.set_mode(isolated)将当前下单的mode 选择isolated， 即为逐仓模式，逐仓模式下每一次交易都有可以设置不同的杠杆倍数，
+　　　从而确定交易占用的保证金。已选定逐仓模式，再通过context.account_1.set_maxleverage(maxleverage)对每次交易进行杠杆设定，其中maxleverage就是设定的杠杆倍数。
+　　　通过set_mode随时转换current_position的mode状态。
+　　　通过set_maxleverage设置当前交易所用的杠杆倍数，以确定占用的保证金金额。　　　
+　７　爆仓后的处理
+　　　不论是全场模式还是逐仓模式，当保证金总额为０时，则进入爆仓状态，程序终止并发出已爆仓信号。
+　         total_margin　<=0　则爆仓。交易停止，发出"爆仓" +当前时间。
+
+
